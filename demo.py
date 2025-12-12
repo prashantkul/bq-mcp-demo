@@ -20,7 +20,7 @@ def main():
     table_id = "privacy-ml-lab2.travel_data.agent_interactions"
 
     if not os.path.exists(client_secret_file):
-        print(f"❌ Error: Client secret file not found: {client_secret_file}")
+        print(f"Error: Client secret file not found: {client_secret_file}")
         return
 
     # Initialize OAuth handler
@@ -29,13 +29,13 @@ def main():
     # Try to load existing credentials
     if not oauth.load_credentials():
         # Run OAuth flow if no valid credentials
-        print("\n📋 No valid credentials found. Starting OAuth flow...\n")
+        print("\nNo valid credentials found. Starting OAuth flow...\n")
         oauth.authenticate()
         oauth.save_credentials()
 
     # Get access token
     access_token = oauth.get_access_token()
-    print(f"\n🎟️  Access Token: {access_token[:20]}...{access_token[-20:]}")
+    print(f"\nAccess Token: {access_token[:20]}...{access_token[-20:]}")
 
     # Query BigQuery table
     print("\n" + "=" * 60)

@@ -25,7 +25,7 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"""
                 <html>
                 <body style="font-family: system-ui; padding: 40px; text-align: center;">
-                    <h1>&#x2705; Authentication Successful!</h1>
+                    <h1>Authentication Successful!</h1>
                     <p>You can close this window and return to your terminal.</p>
                 </body>
                 </html>
@@ -34,7 +34,7 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
             self.send_response(400)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
-            self.wfile.write(b"<h1>&#x274C; No authorization code received</h1>")
+            self.wfile.write(b"<h1>No authorization code received</h1>")
 
     def log_message(self, format, *args):
         """Suppress default logging."""
@@ -65,7 +65,7 @@ class BigQueryOAuthHandler:
         Returns:
             google.oauth2.credentials.Credentials: OAuth credentials
         """
-        print("\n🔐 Starting BigQuery OAuth flow...\n")
+        print("\nStarting BigQuery OAuth flow...\n")
 
         # Create flow from client secrets
         flow = InstalledAppFlow.from_client_secrets_file(
@@ -81,7 +81,7 @@ class BigQueryOAuthHandler:
             success_message='Authentication successful! You can close this window.'
         )
 
-        print("✅ Authentication successful!")
+        print("Authentication successful!")
         return self.credentials
 
     def get_access_token(self):
@@ -95,7 +95,7 @@ class BigQueryOAuthHandler:
 
         # Refresh token if expired
         if self.credentials.expired and self.credentials.refresh_token:
-            print("🔄 Refreshing access token...")
+            print("Refreshing access token...")
             self.credentials.refresh(Request())
 
         return self.credentials.token
@@ -108,7 +108,7 @@ class BigQueryOAuthHandler:
         """
         with open(filename, 'w') as f:
             f.write(self.credentials.to_json())
-        print(f"💾 Credentials saved to {filename}")
+        print(f"Credentials saved to {filename}")
 
     def load_credentials(self, filename='token.json'):
         """Load credentials from file.
@@ -127,11 +127,11 @@ class BigQueryOAuthHandler:
 
             # Refresh if expired
             if self.credentials.expired and self.credentials.refresh_token:
-                print("🔄 Refreshing access token...")
+                print("Refreshing access token...")
                 self.credentials.refresh(Request())
 
-            print(f"✅ Credentials loaded from {filename}")
+            print(f"Credentials loaded from {filename}")
             return True
         except Exception as e:
-            print(f"⚠️  Could not load credentials: {e}")
+            print(f"Could not load credentials: {e}")
             return False

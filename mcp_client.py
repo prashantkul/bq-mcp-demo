@@ -3,9 +3,8 @@
 import asyncio
 import json
 from contextlib import AsyncExitStack
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from mcp.client.sse import sse_client
+from mcp import ClientSession
+from mcp.client.session import ClientSession as MCPClientSession
 import httpx
 
 
@@ -31,7 +30,7 @@ class BigQueryMCPClient:
         Args:
             server_url: URL of the BigQuery MCP server
         """
-        print(f"\n🔗 Connecting to BigQuery MCP server at {server_url}...")
+        print(f"\nConnecting to BigQuery MCP server at {server_url}...")
 
         # Create HTTP client with OAuth token
         headers = {
@@ -42,39 +41,90 @@ class BigQueryMCPClient:
         self.http_client = httpx.AsyncClient(headers=headers, timeout=30.0)
 
         try:
-            # Initialize MCP session with SSE transport for remote server
-            transport = await self.exit_stack.enter_async_context(
-                sse_client(server_url)
+            # Create custom HTTP-based transport for MCP
+            from mcp.client.session import ClientSession as MCPSession
+            from mcp.shared.message import JSONRPCMessage
+
+            # Use HTTP transport for MCP communication
+            class HTTPTransport:
+                def __init__(self, client, url):
+                    self.client = client
+                    self.url = url
+
+                async def send(self, message):
+                    response = await self.client.post(self.url, json=message)
+                    response.raise_for_status()
+                    return response.json()
+
+                async def receive(self):
+                    # For HTTP, we don't have a persistent receive channel
+                    pass
+
+            transport = HTTPTransport(self.http_client, server_url)
+
+            # Create MCP session with HTTP transport
+            self.session = ClientSession(
+                read_stream=None,
+                write_stream=None
             )
 
-            self.session = await self.exit_stack.enter_async_context(
-                ClientSession(transport[0], transport[1])
+            # Initialize the session with HTTP POST
+            init_response = await self.http_client.post(
+                server_url,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {
+                            "name": "bigquery-mcp-client",
+                            "version": "1.0.0"
+                        }
+                    }
+                }
             )
+            init_response.raise_for_status()
 
-            # Initialize the session
-            await self.session.initialize()
-
-            print(f"✅ Connected to BigQuery MCP server!")
+            print(f"Connected to BigQuery MCP server")
+            print(f"Response: {init_response.json()}")
             return True
         except Exception as e:
-            print(f"❌ Connection failed: {e}")
-            print(f"📋 Attempting direct HTTP connection as fallback...")
-            # Keep http_client for direct API calls
-            return False
+            print(f"Connection failed: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     async def list_tools(self):
         """List available tools from the MCP server."""
-        if not self.session:
+        if not self.http_client:
             raise ValueError("Not connected. Call connect() first.")
 
-        result = await self.session.list_tools()
-        print(f"\n🔧 Available tools:")
-        for tool in result.tools:
-            print(f"  - {tool.name}: {tool.description}")
-        return result.tools
+        try:
+            response = await self.http_client.post(
+                "https://bigquery.googleapis.com/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/list",
+                    "params": {}
+                }
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            print(f"\nAvailable tools:")
+            if "result" in result and "tools" in result["result"]:
+                for tool in result["result"]["tools"]:
+                    print(f"  - {tool.get('name', 'unknown')}: {tool.get('description', 'no description')}")
+            return result
+        except Exception as e:
+            print(f"Failed to list tools: {e}")
+            raise
 
     async def query_table(self, table_id, limit=10):
-        """Query a BigQuery table.
+        """Query a BigQuery table using MCP.
 
         Args:
             table_id: Full table ID (project.dataset.table)
@@ -83,58 +133,38 @@ class BigQueryMCPClient:
         Returns:
             Query results
         """
-        print(f"\n📊 Querying table: {table_id}")
+        print(f"\nQuerying table: {table_id}")
 
         query = f"SELECT * FROM `{table_id}` LIMIT {limit}"
 
-        if self.session:
-            # Try using MCP session if connected
-            try:
-                result = await self.session.call_tool("query", {
-                    "query": query,
-                    "project_id": self.project_id
-                })
-                return result
-            except Exception as e:
-                print(f"⚠️  MCP query failed: {e}")
-                print(f"📋 Falling back to direct BigQuery API...")
+        # Use MCP HTTP transport with execute_sql tool
+        response = await self.http_client.post(
+            "https://bigquery.googleapis.com/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "execute_sql",
+                    "arguments": {
+                        "query": query,
+                        "projectId": self.project_id
+                    }
+                }
+            }
+        )
+        response.raise_for_status()
+        result = response.json()
 
-        # Fallback to direct BigQuery API
-        return await self._query_direct(query)
-
-    async def _query_direct(self, query):
-        """Query BigQuery directly using REST API.
-
-        Args:
-            query: SQL query string
-
-        Returns:
-            Query results
-        """
-        url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{self.project_id}/queries"
-
-        payload = {
-            "query": query,
-            "useLegacySql": False
-        }
-
-        try:
-            response = await self.http_client.post(url, json=payload)
-            response.raise_for_status()
-            result = response.json()
-
-            print(f"✅ Query completed!")
-            return result
-        except Exception as e:
-            print(f"❌ Query failed: {e}")
-            raise
+        print(f"MCP query completed")
+        return result
 
     async def close(self):
         """Close the MCP connection."""
         if self.http_client:
             await self.http_client.aclose()
         await self.exit_stack.aclose()
-        print("🔌 Disconnected from MCP server")
+        print("Disconnected from MCP server")
 
 
 async def demo_query(access_token, project_id, table_id):
@@ -149,12 +179,7 @@ async def demo_query(access_token, project_id, table_id):
 
     try:
         await client.connect()
-
-        # Try to list tools if connected via MCP
-        try:
-            await client.list_tools()
-        except:
-            print("ℹ️  MCP tools not available, using direct API")
+        await client.list_tools()
 
         # Query the table
         result = await client.query_table(table_id)
@@ -165,7 +190,7 @@ async def demo_query(access_token, project_id, table_id):
         print(json.dumps(result, indent=2))
 
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\nError: {e}")
         import traceback
         traceback.print_exc()
     finally:
