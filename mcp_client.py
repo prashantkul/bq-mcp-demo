@@ -35,7 +35,8 @@ class BigQueryMCPClient:
         # Create HTTP client with OAuth token
         headers = {
             "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "X-Goog-User-Project": self.project_id
         }
 
         self.http_client = httpx.AsyncClient(headers=headers, timeout=30.0)
@@ -118,10 +119,67 @@ class BigQueryMCPClient:
             if "result" in result and "tools" in result["result"]:
                 for tool in result["result"]["tools"]:
                     print(f"  - {tool.get('name', 'unknown')}: {tool.get('description', 'no description')}")
+                    if "inputSchema" in tool:
+                        print(f"    Parameters: {json.dumps(tool['inputSchema'], indent=6)}")
             return result
         except Exception as e:
             print(f"Failed to list tools: {e}")
             raise
+
+    async def list_datasets(self):
+        """List datasets in the project."""
+        print(f"\nListing datasets in project: {self.project_id}")
+
+        response = await self.http_client.post(
+            "https://bigquery.googleapis.com/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "list_dataset_ids",
+                    "arguments": {
+                        "projectId": self.project_id
+                    }
+                }
+            }
+        )
+
+        if response.status_code != 200:
+            print(f"Error response status: {response.status_code}")
+            print(f"Error response headers: {response.headers}")
+            print(f"Error response body: {response.text}")
+
+        response.raise_for_status()
+        result = response.json()
+
+        print(f"Datasets: {json.dumps(result, indent=2)}")
+        return result
+
+    async def list_tables(self, dataset_id):
+        """List tables in a dataset."""
+        print(f"\nListing tables in dataset: {self.project_id}.{dataset_id}")
+
+        response = await self.http_client.post(
+            "https://bigquery.googleapis.com/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {
+                    "name": "list_table_ids",
+                    "arguments": {
+                        "projectId": self.project_id,
+                        "datasetId": dataset_id
+                    }
+                }
+            }
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        print(f"Tables: {json.dumps(result, indent=2)}")
+        return result
 
     async def query_table(self, table_id, limit=10):
         """Query a BigQuery table using MCP.
@@ -180,6 +238,15 @@ async def demo_query(access_token, project_id, table_id):
     try:
         await client.connect()
         await client.list_tools()
+
+        # List datasets first
+        await client.list_datasets()
+
+        # Extract dataset_id from table_id (format: project.dataset.table)
+        parts = table_id.split('.')
+        if len(parts) >= 2:
+            dataset_id = parts[1]
+            await client.list_tables(dataset_id)
 
         # Query the table
         result = await client.query_table(table_id)
