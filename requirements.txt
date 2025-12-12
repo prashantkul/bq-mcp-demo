@@ -1,0 +1,4 @@
+google-auth-oauthlib>=1.2.0
+google-auth>=2.23.0
+mcp>=1.0.0
+httpx>=0.25.0
